@@ -8,14 +8,15 @@ storage system.
 import "github.com/absfs/inode"
 ```
 
-## Usage
-See "github.com/absfs/memfs" for an example of usage in the creation of an in
-memory filesystem.
-
+## Example Usage
 The basic idea is to use the `inode` package to handle file path resolution,
 and directory entries. The use the inode number `Ino` to point to custom
 data structures in the client side package.  Here's a simplified example using
 a slice of `[]byte` for file data storage.
+
+See "github.com/absfs/memfs" for a more complete example of usage in the
+creation of an in memory filesystem.
+
 
 ```go
 
@@ -161,3 +162,8 @@ func main() {
 }
 
 ```
+
+## LICENSE
+
+This project is governed by the MIT License. See [LICENSE](https://github.com/absfs/inode/blob/master/LICENSE)
+
