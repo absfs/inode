@@ -8,14 +8,14 @@ import (
 // Abs returns name if name is an absolute path. If name is a relative
 // path then an absolute path is constructed by using cwd as the current
 // working directory.
-func abs(cwd, name string) string {
+func Abs(cwd, name string) string {
 	if filepath.IsAbs(name) {
 		return name
 	}
 	return filepath.Join(cwd, name)
 }
 
-func popPath(path string) (string, string) {
+func PopPath(path string) (string, string) {
 	if path == "" {
 		return "", "" // 1
 	}

@@ -24,7 +24,7 @@ func TestPopPath(t *testing.T) {
 	}
 
 	for i, test := range tests {
-		name, trim := popPath(test.Input)
+		name, trim := PopPath(test.Input)
 		t.Logf("%q, %q := popPath(%q)", name, trim, test.Input)
 		if name != test.Name {
 			t.Fatalf("%d: %s != %s", i, name, test.Name)
@@ -37,12 +37,12 @@ func TestPopPath(t *testing.T) {
 }
 
 func TestInode(t *testing.T) {
-	var ino iNo
-	root := ino.newDir(0777)
+	var ino Ino
+	root := ino.NewDir(0777)
 	children := make([]*Inode, 100)
 	for i := range children {
 		ino++
-		children[i] = ino.newFile(0666)
+		children[i] = ino.New(0666)
 	}
 
 	NlinkTest := func(location string, count int) {
@@ -93,7 +93,7 @@ func TestInode(t *testing.T) {
 		}
 
 		// build the node
-		dirnode := ino.newDir(0777)
+		dirnode := ino.NewDir(0777)
 		dirnode.Link("..", parent)
 		// add a link to the parent directory
 		parent.Link(name, dirnode)
@@ -320,13 +320,13 @@ func TestInode(t *testing.T) {
 }
 
 func TestResolve(t *testing.T) {
-	ino := new(iNo)
+	ino := new(Ino)
 
 	var root, parent, dir *Inode
-	root = ino.newDir(0777)
+	root = ino.NewDir(0777)
 	parent = root
 
-	dir = ino.newDir(0777)
+	dir = ino.NewDir(0777)
 	err := parent.Link("tmp", dir)
 	if err != nil {
 		t.Fatal(err)
@@ -337,21 +337,21 @@ func TestResolve(t *testing.T) {
 	}
 
 	parent = dir
-	dir = ino.newDir(0777)
+	dir = ino.NewDir(0777)
 	parent.Link("foo", dir)
 	err = dir.Link("..", parent)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	dir = ino.newDir(0777)
+	dir = ino.NewDir(0777)
 	parent.Link("bar", dir)
 	err = dir.Link("..", parent)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	dir = ino.newDir(0777)
+	dir = ino.NewDir(0777)
 	parent.Link("bat", dir)
 	err = dir.Link("..", parent)
 	if err != nil {
@@ -494,7 +494,7 @@ func TestResolve(t *testing.T) {
 		tests["/tmp/foo"] = 3
 		var dir *Inode
 		for Path, Ino := range tests {
-			node, err := root.resolve(Path)
+			node, err := root.Resolve(Path)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -514,7 +514,7 @@ func TestResolve(t *testing.T) {
 		tests["../bat"] = 5
 		tests["."] = 3
 		for Path, Ino := range tests {
-			node, err := dir.resolve(Path)
+			node, err := dir.Resolve(Path)
 			if err != nil {
 				t.Fatal(err)
 			}

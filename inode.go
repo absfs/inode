@@ -15,6 +15,7 @@ type Inode struct {
 	Ino   uint64
 	Mode  os.FileMode
 	Nlink uint64
+	Size  int64
 
 	Ctime time.Time // creation time
 	Atime time.Time // access time
@@ -146,7 +147,7 @@ func (n *Inode) IsDir() bool {
 }
 
 func (n *Inode) Resolve(path string) (*Inode, error) {
-	name, trim := popPath(path)
+	name, trim := PopPath(path)
 	if name == "/" {
 		if trim == "" {
 			return n, nil
