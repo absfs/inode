@@ -397,7 +397,8 @@ func TestLinkUnlinkMove(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err = root.Move("/file_0000.txt", "/dir01")
+	// move with simultaneous rename
+	err = root.Move("/file_0000.txt", "/dir01/file_0003.txt")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -411,8 +412,8 @@ func TestLinkUnlinkMove(t *testing.T) {
 		"/",
 		"/dir00/",
 		"/dir00/dir01/",
-		"/dir00/dir01/file_0000.txt",
 		"/dir00/dir01/file_0001.txt",
+		"/dir00/dir01/file_0003.txt",
 	}
 	i = 0
 	err = Walk(root, "/", func(path string, n *Inode) error {

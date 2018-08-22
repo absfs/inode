@@ -148,6 +148,7 @@ func (n *Inode) IsDir() bool {
 }
 
 func (n *Inode) Move(source, target string) error {
+
 	dir, name := filepath.Split(source)
 	dir = filepath.Clean(dir)
 
@@ -161,16 +162,28 @@ func (n *Inode) Move(source, target string) error {
 		return err
 	}
 
+	var rename string
 	tnode, err := n.Resolve(target)
+	if (err == nil && !tnode.IsDir()) || (err != nil && os.IsNotExist(err)) {
+		var tdir string
+		tdir, rename = filepath.Split(target)
+		tdir = filepath.Clean(tdir)
+		tnode, err = n.Resolve(tdir)
+	}
 	if err != nil {
 		return err
 	}
 
+	if len(rename) > 0 {
+		name, rename = rename, name
+	}
 	err = tnode.Link(name, snode)
 	if err != nil {
 		return err
 	}
-
+	if len(rename) > 0 {
+		name, rename = rename, name
+	}
 	err = p.Unlink(name)
 	if err != nil {
 		return err
