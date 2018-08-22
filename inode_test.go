@@ -319,6 +319,120 @@ func TestInode(t *testing.T) {
 	}
 }
 
+func TestLinkUnlinkMove(t *testing.T) {
+	ino := new(Ino)
+
+	root := ino.NewDir(0777)
+	dirs := make([]*Inode, 2)
+	var err error
+
+	for i := range dirs {
+		dirs[i] = ino.NewDir(0777)
+		err = root.Link(fmt.Sprintf("dir%02d", i), dirs[i])
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	files := make([]*Inode, 2)
+	for i := range files {
+		files[i] = ino.New(0666)
+		err = root.Link(fmt.Sprintf("file_%04d.txt", i), files[i])
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	list := []string{
+		"/",
+		"/dir00/",
+		"/dir01/",
+		"/file_0000.txt",
+		"/file_0001.txt",
+	}
+	i := 0
+	err = Walk(root, "/", func(path string, n *Inode) error {
+		if strings.HasSuffix(path, "/..") || strings.HasSuffix(path, "/.") {
+			return nil
+		}
+		if n.IsDir() && path != "/" {
+			path += "/"
+		}
+		if list[i] != path {
+			t.Fatalf("expected file listing to match %s != %s", list[i], path)
+		}
+		i++
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = root.Move("/file_0001.txt", "/dir01")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	list = []string{
+		"/",
+		"/dir00/",
+		"/dir01/",
+		"/dir01/file_0001.txt",
+		"/file_0000.txt",
+	}
+	i = 0
+	err = Walk(root, "/", func(path string, n *Inode) error {
+		if strings.HasSuffix(path, "/..") || strings.HasSuffix(path, "/.") {
+			return nil
+		}
+		if n.IsDir() && path != "/" {
+			path += "/"
+		}
+		if list[i] != path {
+			t.Fatalf("expected file listing to match %s != %s", list[i], path)
+		}
+		i++
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = root.Move("/file_0000.txt", "/dir01")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = root.Move("/dir01", "/dir00")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	list = []string{
+		"/",
+		"/dir00/",
+		"/dir00/dir01/",
+		"/dir00/dir01/file_0000.txt",
+		"/dir00/dir01/file_0001.txt",
+	}
+	i = 0
+	err = Walk(root, "/", func(path string, n *Inode) error {
+		if strings.HasSuffix(path, "/..") || strings.HasSuffix(path, "/.") {
+			return nil
+		}
+		if n.IsDir() && path != "/" {
+			path += "/"
+		}
+		if list[i] != path {
+			t.Fatalf("expected file listing to match %s != %s", list[i], path)
+		}
+		i++
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestResolve(t *testing.T) {
 	ino := new(Ino)
 
@@ -526,4 +640,35 @@ func TestResolve(t *testing.T) {
 		}
 	})
 
+}
+
+func Walk(node *Inode, path string, fn func(path string, n *Inode) error) error {
+	err := fn(path, node)
+	if err != nil {
+		return err
+	}
+
+	if !node.IsDir() {
+		if node.Dir.Len() != 0 {
+			return errors.New("is directory")
+		}
+		return nil
+	}
+
+	for _, suffix := range []string{"/.", "/.."} {
+		if strings.HasSuffix(path, suffix) {
+			return nil
+		}
+	}
+
+	if path == "/" {
+		path = ""
+	}
+	for _, entry := range node.Dir {
+		err := Walk(entry.Inode, path+"/"+entry.Name, fn)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }

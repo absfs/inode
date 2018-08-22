@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"syscall"
@@ -144,6 +145,38 @@ func (n *Inode) UnlinkAll() {
 
 func (n *Inode) IsDir() bool {
 	return os.ModeDir&n.Mode != 0
+}
+
+func (n *Inode) Move(source, target string) error {
+	dir, name := filepath.Split(source)
+	dir = filepath.Clean(dir)
+
+	snode, err := n.Resolve(source)
+	if err != nil {
+		return err
+	}
+
+	p, err := n.Resolve(dir)
+	if err != nil {
+		return err
+	}
+
+	tnode, err := n.Resolve(target)
+	if err != nil {
+		return err
+	}
+
+	err = tnode.Link(name, snode)
+	if err != nil {
+		return err
+	}
+
+	err = p.Unlink(name)
+	if err != nil {
+		return err
+	}
+
+	return nil
 }
 
 func (n *Inode) Resolve(path string) (*Inode, error) {
