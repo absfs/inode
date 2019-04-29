@@ -367,7 +367,7 @@ func TestLinkUnlinkMove(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err = root.Move("/file_0001.txt", "/dir01")
+	err = root.Rename("/file_0001.txt", "/dir01")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -398,12 +398,12 @@ func TestLinkUnlinkMove(t *testing.T) {
 	}
 
 	// move with simultaneous rename
-	err = root.Move("/file_0000.txt", "/dir01/file_0003.txt")
+	err = root.Rename("/file_0000.txt", "/dir01/file_0003.txt")
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	err = root.Move("/dir01", "/dir00")
+	err = root.Rename("/dir01", "/dir00")
 	if err != nil {
 		t.Fatal(err)
 	}

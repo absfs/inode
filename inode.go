@@ -4,7 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
+	filepath "path"
 	"sort"
 	"strings"
 	"syscall"
@@ -75,14 +75,14 @@ func (n *Ino) New(mode os.FileMode) *Inode {
 		Atime: now,
 		Mtime: now,
 		Ctime: now,
-		Mode:  mode &^ os.ModeType,
+		Mode:  mode,
 	}
 }
 
 func (n *Ino) NewDir(mode os.FileMode) *Inode {
 	dir := n.New(mode)
 	var err error
-	dir.Mode = os.ModeDir | mode&^os.ModeType
+	dir.Mode = os.ModeDir | mode
 	err = dir.Link(".", dir)
 	if err != nil {
 		panic(err)
@@ -147,12 +147,12 @@ func (n *Inode) IsDir() bool {
 	return os.ModeDir&n.Mode != 0
 }
 
-func (n *Inode) Move(source, target string) error {
+func (n *Inode) Rename(oldpath, newpath string) error {
 
-	dir, name := filepath.Split(source)
+	dir, name := filepath.Split(oldpath)
 	dir = filepath.Clean(dir)
 
-	snode, err := n.Resolve(source)
+	snode, err := n.Resolve(oldpath)
 	if err != nil {
 		return err
 	}
@@ -163,10 +163,10 @@ func (n *Inode) Move(source, target string) error {
 	}
 
 	var rename string
-	tnode, err := n.Resolve(target)
+	tnode, err := n.Resolve(newpath)
 	if (err == nil && !tnode.IsDir()) || (err != nil && os.IsNotExist(err)) {
 		var tdir string
-		tdir, rename = filepath.Split(target)
+		tdir, rename = filepath.Split(newpath)
 		tdir = filepath.Clean(tdir)
 		tnode, err = n.Resolve(tdir)
 	}
