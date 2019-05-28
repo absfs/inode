@@ -10,15 +10,24 @@ import "github.com/absfs/inode"
 
 ## Example Usage
 The basic idea is to use the `inode` package to handle file path resolution,
-and directory entries. The use the inode number `Ino` to point to custom
-data structures in the client side package.  Here's a simplified example using
-a slice of `[]byte` for file data storage.
+directory entries, and basic file metadata such as file mode and modification time.
+The inode number can be used to link to actual file data.
 
-See "github.com/absfs/memfs" for a more complete example of usage in the
-creation of an in memory filesystem.
+Here's a simplified example using a map of byte slice to store file data.
+
+See [absfs/memfs](github.com/absfs/memfs) for a complete in memory filesystem example. 
 
 
 ```go
+package main
+
+import (
+	"fmt"
+	"os"
+	"path/filepath"
+
+	"github.com/absfs/inode"
+)
 
 type SimpleFS struct {
   Ino  *inode.Ino
