@@ -95,7 +95,9 @@ func (n *Ino) NewDir(mode os.FileMode) *Inode {
 	return dir
 }
 
+// Link - link adds a directory entry (DirEntry) for the given node (assumed to be a directory) to the provided child Inode.
 func (n *Inode) Link(name string, child *Inode) error {
+	// Return an error if a regular file is used as a link target
 	if !n.IsDir() {
 		return errors.New("not a directory")
 	}
@@ -112,8 +114,10 @@ func (n *Inode) Link(name string, child *Inode) error {
 	return nil
 }
 
+// Unlink - removes the directory entry (DirEntry).
 func (n *Inode) Unlink(name string) error {
 
+	// It is an error to unlink an Inode that is not a directory
 	if !n.IsDir() {
 		return errors.New("not a directory")
 	}
