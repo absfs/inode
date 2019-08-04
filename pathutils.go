@@ -15,6 +15,8 @@ func Abs(cwd, name string) string {
 	return filepath.Join(cwd, name)
 }
 
+// PopPath returns the first name in `path` and the rest of the `path` string.
+// The path provided must use forward slashes ("/").
 func PopPath(path string) (string, string) {
 	if path == "" {
 		return "", "" // 1

@@ -5,37 +5,38 @@ import (
 	"time"
 )
 
-type info struct {
-	name string
-	node *Inode
+// Stat - implements the os.FileInfo interface
+type Stat struct {
+	Filename string
+	Node     *Inode
 }
 
 // base name of the file
-func (i *info) Name() string {
-	return i.name
+func (i *Stat) Name() string {
+	return i.Filename
 }
 
 // length in bytes for regular files; system-dependent for others
-func (i *info) Size() int64 {
-	return i.node.Size
+func (i *Stat) Size() int64 {
+	return i.Node.Size
 }
 
 // file mode bits
-func (i *info) Mode() os.FileMode {
-	return i.node.Mode
+func (i *Stat) Mode() os.FileMode {
+	return i.Node.Mode
 }
 
 // modification time
-func (i *info) ModTime() time.Time {
-	return i.node.Mtime
+func (i *Stat) ModTime() time.Time {
+	return i.Node.Mtime
 }
 
 // abbreviation for Mode().IsDir()
-func (i *info) IsDir() bool {
+func (i *Stat) IsDir() bool {
 	return i.Mode()&os.ModeDir != 0
 }
 
 // underlying data source (can return nil)
-func (i *info) Sys() interface{} {
-	return i.node
+func (i *Stat) Sys() interface{} {
+	return i.Node
 }
