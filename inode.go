@@ -152,44 +152,52 @@ func (n *Inode) IsDir() bool {
 }
 
 func (n *Inode) Rename(oldpath, newpath string) error {
-
 	dir, name := filepath.Split(oldpath)
 	dir = filepath.Clean(dir)
 
+	// Resolve source node
 	snode, err := n.Resolve(oldpath)
 	if err != nil {
 		return err
 	}
 
+	// Resolve source parent directory
 	p, err := n.Resolve(dir)
 	if err != nil {
 		return err
 	}
 
-	var rename string
+	// Check if target exists
 	tnode, err := n.Resolve(newpath)
-	if (err == nil && !tnode.IsDir()) || (err != nil && os.IsNotExist(err)) {
-		var tdir string
-		tdir, rename = filepath.Split(newpath)
-		tdir = filepath.Clean(tdir)
-		tnode, err = n.Resolve(tdir)
+	if err == nil {
+		// Target exists - this should fail according to POSIX
+		return syscall.EEXIST
+	} else if !os.IsNotExist(err) {
+		// Some other error occurred
+		return err
 	}
+
+	// Get target directory and new name
+	tdir, rename := filepath.Split(newpath)
+	tdir = filepath.Clean(tdir)
+
+	// Resolve target directory
+	tnode, err = n.Resolve(tdir)
 	if err != nil {
 		return err
 	}
 
-	if len(rename) > 0 {
-		name, rename = rename, name
-	}
-	err = tnode.Link(name, snode)
+	// Create new link
+	err = tnode.Link(rename, snode)
 	if err != nil {
 		return err
 	}
-	if len(rename) > 0 {
-		name, rename = rename, name
-	}
+
+	// Remove old link
 	err = p.Unlink(name)
 	if err != nil {
+		// If unlinking fails, try to undo the new link
+		tnode.Unlink(rename)
 		return err
 	}
 
