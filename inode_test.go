@@ -160,7 +160,8 @@ func TestInode(t *testing.T) {
 		defer close(testoutput)
 		err = walk(root, "/")
 		if err != nil {
-			t.Fatal(err)
+			t.Error(err)
+			return
 		}
 	}()
 
