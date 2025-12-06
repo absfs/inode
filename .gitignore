@@ -27,3 +27,8 @@ go.work.sum
 *.swo
 *~
 .DS_Store
+
+# Claude and project metadata
+.claude/
+CLAUDE.md
+.project_meta/
