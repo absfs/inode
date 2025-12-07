@@ -1,9 +1,9 @@
 # inode - filesystem primitives for go
 
-[![Build Status](https://github.com/absfs/inode/workflows/CI/badge.svg)](https://github.com/absfs/inode/actions)
-[![Go Report Card](https://goreportcard.com/badge/github.com/absfs/inode)](https://goreportcard.com/report/github.com/absfs/inode)
-[![codecov](https://codecov.io/gh/absfs/inode/branch/main/graph/badge.svg)](https://codecov.io/gh/absfs/inode)
 [![Go Reference](https://pkg.go.dev/badge/github.com/absfs/inode.svg)](https://pkg.go.dev/github.com/absfs/inode)
+[![Go Report Card](https://goreportcard.com/badge/github.com/absfs/inode)](https://goreportcard.com/report/github.com/absfs/inode)
+[![CI](https://github.com/absfs/inode/actions/workflows/ci.yml/badge.svg)](https://github.com/absfs/inode/actions/workflows/ci.yml)
+[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 The `inode` package provides `Inode`, `Directory`, and `DirEntry` primitives
 for inode style filesystems. This package does not implement any actual data
