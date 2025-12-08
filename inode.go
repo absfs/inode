@@ -9,10 +9,10 @@
 // Lock-Free Operations (using sync/atomic):
 //   - Inode number allocation (Ino.New, Ino.NewDir)
 //   - Link count updates (Nlink field)
+//   - Timestamp updates (Ctime, Atime, Mtime via accessor methods)
 //
 // RWMutex-Protected Operations:
 //   - Directory operations (Link, Unlink, Resolve, Rename, ReadDir, Lookup)
-//   - Timestamp updates (Atime, Mtime)
 //
 // The Rename operation uses lock ordering by pointer address to prevent
 // deadlocks when modifying multiple directories.
@@ -70,7 +70,8 @@ import (
 // Thread Safety:
 //   - Ino is immutable after creation
 //   - Nlink, Size, Mode, Uid, Gid use atomic operations (lock-free)
-//   - Ctime, Atime, Mtime, and Dir are protected by an internal RWMutex
+//   - ctime, atime, mtime use atomic operations (lock-free, accessed via methods)
+//   - Dir is protected by an internal RWMutex
 //   - All exported methods are safe for concurrent use
 //   - Direct field access requires external synchronization or use of Lock/RLock methods
 type Inode struct {
@@ -79,16 +80,34 @@ type Inode struct {
 	Nlink uint64
 	Size  int64
 
-	Ctime time.Time // creation time
-	Atime time.Time // access time
-	Mtime time.Time // modification time
+	ctime atomic.Int64 // creation time (Unix nanoseconds, unexported)
+	atime atomic.Int64 // access time (Unix nanoseconds, unexported)
+	mtime atomic.Int64 // modification time (Unix nanoseconds, unexported)
 	Uid   uint32
 	Gid   uint32
 
 	Dir Directory
 
-	mu sync.RWMutex // protects Dir, Ctime, Atime, Mtime
+	mu sync.RWMutex // protects Dir
 }
+
+// Ctime returns the creation time of the inode.
+func (n *Inode) Ctime() time.Time { return time.Unix(0, n.ctime.Load()) }
+
+// Atime returns the access time of the inode.
+func (n *Inode) Atime() time.Time { return time.Unix(0, n.atime.Load()) }
+
+// Mtime returns the modification time of the inode.
+func (n *Inode) Mtime() time.Time { return time.Unix(0, n.mtime.Load()) }
+
+// SetCtime sets the creation time of the inode.
+func (n *Inode) SetCtime(t time.Time) { n.ctime.Store(t.UnixNano()) }
+
+// SetAtime sets the access time of the inode.
+func (n *Inode) SetAtime(t time.Time) { n.atime.Store(t.UnixNano()) }
+
+// SetMtime sets the modification time of the inode.
+func (n *Inode) SetMtime(t time.Time) { n.mtime.Store(t.UnixNano()) }
 
 // DirEntry represents a single entry in a directory.
 // It associates a name with an Inode pointer.
@@ -149,14 +168,15 @@ type Ino uint64
 // This method is safe for concurrent use.
 func (n *Ino) New(mode os.FileMode) *Inode {
 	ino := atomic.AddUint64((*uint64)(n), 1)
-	now := time.Now()
-	return &Inode{
-		Ino:   ino,
-		Atime: now,
-		Mtime: now,
-		Ctime: now,
-		Mode:  mode,
+	now := time.Now().UnixNano()
+	node := &Inode{
+		Ino:  ino,
+		Mode: mode,
 	}
+	node.ctime.Store(now)
+	node.atime.Store(now)
+	node.mtime.Store(now)
+	return node
 }
 
 // NewDir creates a new directory Inode with the given mode and a unique inode number.
@@ -407,16 +427,16 @@ func (n *Inode) Resolve(path string) (*Inode, error) {
 	return nn.Resolve(trim)
 }
 
-// accessed updates the access time. Caller must hold n.mu.Lock().
+// accessed updates the access time. Lock-free, safe for concurrent use.
 func (n *Inode) accessed() {
-	n.Atime = time.Now()
+	n.atime.Store(time.Now().UnixNano())
 }
 
-// modified updates both access and modification times. Caller must hold n.mu.Lock().
+// modified updates both access and modification times. Lock-free, safe for concurrent use.
 func (n *Inode) modified() {
-	now := time.Now()
-	n.Atime = now
-	n.Mtime = now
+	now := time.Now().UnixNano()
+	n.atime.Store(now)
+	n.mtime.Store(now)
 }
 
 // countUp atomically increments the link count (lock-free).

@@ -65,7 +65,7 @@ func TestStat_ModTime(t *testing.T) {
 	now := time.Now().Truncate(time.Second)
 	var ino Ino = 1
 	node := ino.New(os.ModePerm)
-	node.Mtime = now
+	node.SetMtime(now)
 
 	stat := &Stat{
 		Filename: "testfile.txt",
@@ -132,7 +132,7 @@ func TestStat_FileInfoInterface(t *testing.T) {
 	var ino Ino = 123
 	node := ino.New(os.ModeDir | 0755)
 	node.Size = 4096
-	node.Mtime = time.Date(2025, 11, 23, 12, 0, 0, 0, time.UTC)
+	node.SetMtime(time.Date(2025, 11, 23, 12, 0, 0, 0, time.UTC))
 
 	stat := &Stat{
 		Filename: "mydir",

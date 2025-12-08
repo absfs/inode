@@ -28,7 +28,7 @@ func (i *Stat) Mode() os.FileMode {
 
 // modification time
 func (i *Stat) ModTime() time.Time {
-	return i.Node.Mtime
+	return i.Node.Mtime()
 }
 
 // abbreviation for Mode().IsDir()
