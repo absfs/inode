@@ -2,7 +2,7 @@ package inode
 
 import (
 	"errors"
-	filepath "path"
+	"path"
 	"strings"
 	"testing"
 )
@@ -207,7 +207,7 @@ func TestResolve(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			t.Logf("%d %q \t%q", node.Ino, Path, filepath.Join("/tmp/foo", Path))
+			t.Logf("%d %q \t%q", node.Ino, Path, path.Join("/tmp/foo", Path))
 			if node.Ino != Ino {
 				t.Fatalf("Ino: %d, Expected: %d\n", node.Ino, Ino)
 			}

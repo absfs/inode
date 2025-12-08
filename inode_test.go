@@ -4,7 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	filepath "path"
+	"path"
 	"strings"
 	"testing"
 )
@@ -34,7 +34,7 @@ func TestInode(t *testing.T) {
 		name := fmt.Sprintf("file.%04d.txt", i+2)
 
 		err := root.Link(name, n)
-		name = filepath.Join("/", name)
+		name = path.Join("/", name)
 		paths[name] = n
 		if err != nil {
 			t.Fatal(err)
@@ -45,21 +45,21 @@ func TestInode(t *testing.T) {
 
 	CWD := "/"
 	cwd := &CWD
-	Mkdir := func(path string, perm os.FileMode) error {
+	Mkdir := func(p string, perm os.FileMode) error {
 
-		if !filepath.IsAbs(path) {
-			path = filepath.Join(*cwd, path)
+		if !path.IsAbs(p) {
+			p = path.Join(*cwd, p)
 		}
 
 		// does this path already exist?
-		_, ok := paths[path]
+		_, ok := paths[p]
 		if ok { // if so, error
 			return os.ErrExist
 		}
 
 		// find the parent directory
-		dir, name := filepath.Split(path)
-		dir = filepath.Clean(dir)
+		dir, name := path.Split(p)
+		dir = path.Clean(dir)
 		parent, ok := paths[dir]
 		if !ok {
 			return os.ErrNotExist
@@ -71,10 +71,10 @@ func TestInode(t *testing.T) {
 		// add a link to the parent directory
 		parent.Link(name, dirnode)
 
-		paths[path] = dirnode
+		paths[p] = dirnode
 
 		if dirnode.Nlink != 2 {
-			return fmt.Errorf("incorrect link count for %q", path)
+			return fmt.Errorf("incorrect link count for %q", p)
 		}
 		return nil // done?
 	}
@@ -96,29 +96,29 @@ func TestInode(t *testing.T) {
 	}
 
 	// dirnode.link(name, child)
-	for path, n := range paths {
-		name := filepath.Base(path)
+	for p, n := range paths {
+		name := path.Base(p)
 		if !strings.HasPrefix(name, "file") {
 			continue
 		}
 		dirnode.Link(name, n)
-		name = filepath.Join("/dir0001/dir0002", name)
+		name = path.Join("/dir0001/dir0002", name)
 		paths[name] = n
 	}
 
 	NlinkTest("NLT 3", 2)
 
-	for path, _ := range paths {
-		if !strings.HasPrefix(path, "/file") {
+	for p := range paths {
+		if !strings.HasPrefix(p, "/file") {
 			continue
 		}
 
-		name := filepath.Base(path)
+		name := path.Base(p)
 		err := root.Unlink(name)
 		if err != nil {
 			t.Fatalf("%s %s", name, err)
 		}
-		delete(paths, path)
+		delete(paths, p)
 	}
 
 	NlinkTest("NLT 4", 1)

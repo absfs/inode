@@ -55,7 +55,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	filepath "path"
+	"path" // Virtual filesystem paths always use forward slashes
 	"sort"
 	"strings"
 	"sync"
@@ -315,11 +315,11 @@ func (n *Inode) Lookup(name string) *DirEntry {
 // This method is safe for concurrent use. It uses lock ordering by
 // pointer address to prevent deadlocks when locking multiple directories.
 func (n *Inode) Rename(oldpath, newpath string) error {
-	srcDir, srcName := filepath.Split(oldpath)
-	srcDir = filepath.Clean(srcDir)
+	srcDir, srcName := path.Split(oldpath)
+	srcDir = path.Clean(srcDir)
 
-	dstDir, dstName := filepath.Split(newpath)
-	dstDir = filepath.Clean(dstDir)
+	dstDir, dstName := path.Split(newpath)
+	dstDir = path.Clean(dstDir)
 
 	// Resolve source node
 	srcNode, err := n.Resolve(oldpath)
