@@ -30,7 +30,7 @@ package main
 import (
 	"fmt"
 	"os"
-	"path/filepath"
+	"path" // Use path (not path/filepath) for virtual filesystem paths
 
 	"github.com/absfs/inode"
 )
@@ -55,8 +55,8 @@ func (fs *SimpleFS) Mkdir(name string, mode os.FileMode) error {
     return os.ErrExist
   }
 
-  dir, filename := filepath.Split(name)
-  dir = filepath.Clean(dir)
+  dir, filename := path.Split(name)
+  dir = path.Clean(dir)
 
   parent, err := fs.Root.Resolve(dir)
   if err != nil {
@@ -81,8 +81,8 @@ func (fs *SimpleFS) Create(name string) (f *SimpleFile, err error) {
     }, nil
   }
 
-  dir, filename := filepath.Split(name)
-  dir = filepath.Clean(dir)
+  dir, filename := path.Split(name)
+  dir = path.Clean(dir)
   parent, err := fs.Root.Resolve(dir)
   if err != nil {
     return nil, err
