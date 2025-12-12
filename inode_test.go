@@ -148,7 +148,7 @@ func TestInode(t *testing.T) {
 			path = ""
 		}
 		for _, entry := range node.Dir {
-			err := walk(entry.Inode, path+"/"+entry.Name)
+			err := walk(entry.Inode, path+"/"+entry.Name())
 			if err != nil {
 				return err
 			}

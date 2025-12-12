@@ -126,7 +126,7 @@ func TestConcurrentLinkUnlink(t *testing.T) {
 	entries := root.ReadDir()
 	actualCount := 0
 	for _, e := range entries {
-		if e.Name != "." && e.Name != ".." {
+		if e.Name() != "." && e.Name() != ".." {
 			actualCount++
 		}
 	}
@@ -247,7 +247,7 @@ func TestConcurrentLinkResolve(t *testing.T) {
 	expectedFiles := writers * opsPerGoroutine
 	actualFiles := 0
 	for _, e := range entries {
-		if e.Name != "." && e.Name != ".." {
+		if e.Name() != "." && e.Name() != ".." {
 			actualFiles++
 		}
 	}
@@ -311,7 +311,7 @@ func TestConcurrentRename(t *testing.T) {
 	dir1Entries := dir1.ReadDir()
 	dir1Files := 0
 	for _, e := range dir1Entries {
-		if e.Name != "." && e.Name != ".." {
+		if e.Name() != "." && e.Name() != ".." {
 			dir1Files++
 		}
 	}
@@ -323,7 +323,7 @@ func TestConcurrentRename(t *testing.T) {
 	dir2Entries := dir2.ReadDir()
 	dir2Files := 0
 	for _, e := range dir2Entries {
-		if e.Name != "." && e.Name != ".." {
+		if e.Name() != "." && e.Name() != ".." {
 			dir2Files++
 		}
 	}
@@ -417,9 +417,9 @@ func TestConcurrentReadDir(t *testing.T) {
 				entries := root.ReadDir()
 				// Verify snapshot is consistent (sorted)
 				for k := 1; k < len(entries); k++ {
-					if entries[k-1].Name >= entries[k].Name {
+					if entries[k-1].Name() >= entries[k].Name() {
 						t.Errorf("directory not sorted: %s >= %s",
-							entries[k-1].Name, entries[k].Name)
+							entries[k-1].Name(), entries[k].Name())
 						return
 					}
 				}

@@ -54,6 +54,7 @@ package inode
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path" // Virtual filesystem paths always use forward slashes
 	"sort"
@@ -110,10 +111,21 @@ func (n *Inode) SetAtime(t time.Time) { n.atime.Store(t.UnixNano()) }
 func (n *Inode) SetMtime(t time.Time) { n.mtime.Store(t.UnixNano()) }
 
 // DirEntry represents a single entry in a directory.
-// It associates a name with an Inode pointer.
+// It associates a name with an Inode pointer and implements fs.DirEntry.
 type DirEntry struct {
-	Name  string
+	name  string
 	Inode *Inode
+}
+
+// NewDirEntry creates a new directory entry with the given name and inode.
+func NewDirEntry(name string, inode *Inode) *DirEntry {
+	return &DirEntry{name: name, Inode: inode}
+}
+
+// Name returns the name of the file (or subdirectory) described by the entry.
+// This implements fs.DirEntry.
+func (e *DirEntry) Name() string {
+	return e.name
 }
 
 // IsDir returns true if this entry references a directory inode.
@@ -124,13 +136,31 @@ func (e *DirEntry) IsDir() bool {
 	return e.Inode.IsDir()
 }
 
+// Type returns the type bits for the entry.
+// This method implements fs.DirEntry.
+func (e *DirEntry) Type() fs.FileMode {
+	if e.Inode == nil {
+		return 0
+	}
+	return e.Inode.Mode.Type()
+}
+
+// Info returns the FileInfo for the file or subdirectory described by the entry.
+// This method implements fs.DirEntry.
+func (e *DirEntry) Info() (fs.FileInfo, error) {
+	if e.Inode == nil {
+		return nil, fs.ErrNotExist
+	}
+	return &Stat{Filename: e.name, Node: e.Inode}, nil
+}
+
 // String returns a string representation of the directory entry.
 func (e *DirEntry) String() string {
 	nodeStr := "(nil)"
 	if e.Inode != nil {
 		nodeStr = fmt.Sprintf("{Ino:%d ...}", e.Inode.Ino)
 	}
-	return fmt.Sprintf("entry{%q, inode%s", e.Name, nodeStr)
+	return fmt.Sprintf("entry{%q, inode%s", e.name, nodeStr)
 }
 
 // Directory is a sorted slice of directory entries.
@@ -145,7 +175,7 @@ func (d Directory) Len() int { return len(d) }
 func (d Directory) Swap(i, j int) { d[i], d[j] = d[j], d[i] }
 
 // Less reports whether the entry at i should sort before the entry at j.
-func (d Directory) Less(i, j int) bool { return d[i].Name < d[j].Name }
+func (d Directory) Less(i, j int) bool { return d[i].Name() < d[j].Name() }
 
 func (n *Inode) String() string {
 	if n == nil {
@@ -188,8 +218,8 @@ func (n *Ino) NewDir(mode os.FileMode) *Inode {
 	// Initialize . and .. without locking since this is a new inode
 	// not yet visible to other goroutines
 	dir.Dir = make(Directory, 0, 2)
-	dir.linkiNoLock(0, &DirEntry{".", dir})
-	dir.linkiNoLock(1, &DirEntry{"..", dir})
+	dir.linkiNoLock(0, NewDirEntry(".", dir))
+	dir.linkiNoLock(1, NewDirEntry("..", dir))
 	return dir
 }
 
@@ -206,9 +236,9 @@ func (n *Inode) Link(name string, child *Inode) error {
 	defer n.mu.Unlock()
 
 	x := n.find(name)
-	entry := &DirEntry{name, child}
+	entry := NewDirEntry(name, child)
 
-	if x < len(n.Dir) && n.Dir[x].Name == name {
+	if x < len(n.Dir) && n.Dir[x].Name() == name {
 		n.linkswapi(x, entry)
 		return nil
 	}
@@ -228,7 +258,7 @@ func (n *Inode) Unlink(name string) error {
 	defer n.mu.Unlock()
 
 	x := n.find(name)
-	if x == len(n.Dir) || n.Dir[x].Name != name {
+	if x == len(n.Dir) || n.Dir[x].Name() != name {
 		return syscall.ENOENT
 	}
 
@@ -249,7 +279,7 @@ func (n *Inode) UnlinkAll() {
 
 	// Process entries without holding the lock to avoid deadlock
 	for _, e := range entries {
-		if e.Name == ".." {
+		if e.Name() == ".." {
 			continue
 		}
 		if e.Inode.Ino == n.Ino {
@@ -304,7 +334,7 @@ func (n *Inode) Lookup(name string) *DirEntry {
 	n.mu.RLock()
 	defer n.mu.RUnlock()
 	x := n.find(name)
-	if x < len(n.Dir) && n.Dir[x].Name == name {
+	if x < len(n.Dir) && n.Dir[x].Name() == name {
 		return n.Dir[x]
 	}
 	return nil
@@ -367,18 +397,18 @@ func (n *Inode) Rename(oldpath, newpath string) error {
 
 	// Re-verify source exists after acquiring locks
 	srcIdx := srcParent.find(srcName)
-	if srcIdx >= len(srcParent.Dir) || srcParent.Dir[srcIdx].Name != srcName {
+	if srcIdx >= len(srcParent.Dir) || srcParent.Dir[srcIdx].Name() != srcName {
 		return syscall.ENOENT
 	}
 
 	// Re-verify target doesn't exist after acquiring locks
 	dstIdx := dstParent.find(dstName)
-	if dstIdx < len(dstParent.Dir) && dstParent.Dir[dstIdx].Name == dstName {
+	if dstIdx < len(dstParent.Dir) && dstParent.Dir[dstIdx].Name() == dstName {
 		return syscall.EEXIST
 	}
 
 	// Create entry in destination
-	entry := &DirEntry{dstName, srcNode}
+	entry := NewDirEntry(dstName, srcNode)
 	dstParent.Dir = append(dstParent.Dir, nil)
 	copy(dstParent.Dir[dstIdx+1:], dstParent.Dir[dstIdx:])
 	dstParent.Dir[dstIdx] = entry
@@ -413,7 +443,7 @@ func (n *Inode) Resolve(path string) (*Inode, error) {
 	n.mu.RLock()
 	x := n.find(name)
 	var nn *Inode
-	if x < len(n.Dir) && n.Dir[x].Name == name {
+	if x < len(n.Dir) && n.Dir[x].Name() == name {
 		nn = n.Dir[x].Inode
 	}
 	n.mu.RUnlock()
@@ -498,6 +528,6 @@ func (n *Inode) linkiNoLock(i int, entry *DirEntry) {
 // If the name exists, returns its index. Caller must hold n.mu.RLock() or n.mu.Lock().
 func (n *Inode) find(name string) int {
 	return sort.Search(len(n.Dir), func(i int) bool {
-		return n.Dir[i].Name >= name
+		return n.Dir[i].Name() >= name
 	})
 }

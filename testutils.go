@@ -29,7 +29,7 @@ func Walk(node *Inode, path string, fn func(path string, n *Inode) error) error 
 		path = ""
 	}
 	for _, entry := range node.Dir {
-		err := Walk(entry.Inode, path+"/"+entry.Name, fn)
+		err := Walk(entry.Inode, path+"/"+entry.Name(), fn)
 		if err != nil {
 			return err
 		}
