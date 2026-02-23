@@ -1,9 +1,7 @@
 package inode
 
 import (
-	"errors"
 	"path"
-	"strings"
 	"testing"
 )
 
@@ -46,131 +44,41 @@ func TestResolve(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	tests := []struct {
-		Path string
-		Ino  uint64
-	}{
-		{
-			Path: "/",
-			Ino:  1,
-		},
-		{
-			Path: "/.",
-			Ino:  1,
-		},
-		{
-			Path: "/..",
-			Ino:  1,
-		},
-		{
-			Path: "/tmp",
-			Ino:  2,
-		},
-		{
-			Path: "/tmp/.",
-			Ino:  2,
-		},
-		{
-			Path: "/tmp/..",
-			Ino:  1,
-		},
-		{
-			Path: "/tmp/bar",
-			Ino:  4,
-		},
-		{
-			Path: "/tmp/bar/.",
-			Ino:  4,
-		},
-		{
-			Path: "/tmp/bar/..",
-			Ino:  2,
-		},
-		{
-			Path: "/tmp/bat",
-			Ino:  5,
-		},
-		{
-			Path: "/tmp/bat/.",
-			Ino:  5,
-		},
-		{
-			Path: "/tmp/bat/..",
-			Ino:  2,
-		},
-		{
-			Path: "/tmp/foo",
-			Ino:  3,
-		},
-		{
-			Path: "/tmp/foo/.",
-			Ino:  3,
-		},
-		{
-			Path: "/tmp/foo/..",
-			Ino:  2,
-		},
+	// Walk the tree and verify all expected nodes are visited
+	expected := map[string]uint64{
+		"/":           1,
+		"/.":          1,
+		"/..":         1,
+		"/tmp":        2,
+		"/tmp/.":      2,
+		"/tmp/..":     1,
+		"/tmp/bar":    4,
+		"/tmp/bar/.":  4,
+		"/tmp/bar/..": 2,
+		"/tmp/bat":    5,
+		"/tmp/bat/.":  5,
+		"/tmp/bat/..": 2,
+		"/tmp/foo":    3,
+		"/tmp/foo/.":  3,
+		"/tmp/foo/..": 2,
 	}
 
-	count := 0
-	type testcase struct {
-		Path string
-		Node *Inode
-	}
-
-	testoutput := make(chan *testcase)
-	var walk func(node *Inode, path string) error
-	walk = func(node *Inode, path string) error {
-		count++
-		if count > 20 {
-			return errors.New("counted too far")
-		}
-
-		testoutput <- &testcase{path, node}
-
-		if !node.IsDir() {
-			if node.Dir.Len() != 0 {
-				return errors.New("is directory")
-			}
-			return nil
-		}
-		for _, suffix := range []string{"/.", "/.."} {
-			if strings.HasSuffix(path, suffix) {
-				return nil
-			}
-		}
-
-		if path == "/" {
-			path = ""
-		}
-		for _, entry := range node.ReadDir() {
-			err := walk(entry.Inode, path+"/"+entry.Name())
-			if err != nil {
-				return err
-			}
-		}
+	got := make(map[string]uint64)
+	err = Walk(root, "/", func(p string, n *Inode) error {
+		got[p] = n.Ino
 		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
 
-	go func() {
-		defer close(testoutput)
-		err = walk(root, "/")
-		if err != nil {
-			t.Error(err)
-			return
+	if len(got) != len(expected) {
+		t.Fatalf("walk visited %d nodes, expected %d", len(got), len(expected))
+	}
+	for p, ino := range expected {
+		if got[p] != ino {
+			t.Errorf("path %q: got ino %d, expected %d", p, got[p], ino)
 		}
-	}()
-
-	i := 0
-	for test := range testoutput {
-		if tests[i].Path != test.Path {
-			t.Errorf("Path: expected %q, got %q", tests[i].Path, test.Path)
-		}
-
-		if tests[i].Ino != test.Node.Ino {
-			t.Errorf("Ino: expected %d, got %d -- %q, %q", tests[i].Ino, test.Node.Ino, tests[i].Path, test.Path)
-		}
-		i++
 	}
 
 	t.Run("resolve", func(t *testing.T) {

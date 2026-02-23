@@ -415,13 +415,14 @@ func TestConcurrentReadDir(t *testing.T) {
 			defer wg.Done()
 			for j := 0; j < ops; j++ {
 				entries := root.ReadDir()
-				// Verify snapshot is consistent (sorted)
-				for k := 1; k < len(entries); k++ {
-					if entries[k-1].Name() >= entries[k].Name() {
-						t.Errorf("directory not sorted: %s >= %s",
-							entries[k-1].Name(), entries[k].Name())
+				// Verify snapshot is consistent (no duplicate names)
+				seen := make(map[string]bool, len(entries))
+				for _, e := range entries {
+					if seen[e.Name()] {
+						t.Errorf("duplicate entry: %s", e.Name())
 						return
 					}
+					seen[e.Name()] = true
 				}
 			}
 		}()

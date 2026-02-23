@@ -17,6 +17,14 @@
 // The Rename operation uses lock ordering by pointer address to prevent
 // deadlocks when modifying multiple directories.
 //
+// # Directory Storage
+//
+// Directory entries are stored in an unsorted slice. Small directories use
+// linear scan for lookups. When a directory grows past dirMapThreshold
+// entries, a hash map is allocated for O(1) lookups. The map is never
+// removed once allocated. ReadDir returns entries in arbitrary order;
+// callers that need sorted output must sort the result themselves.
+//
 // # Direct Field Access
 //
 // For callers that need to access Inode fields directly, Lock/Unlock and
@@ -57,7 +65,6 @@ import (
 	"io/fs"
 	"os"
 	"path" // Virtual filesystem paths always use forward slashes
-	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -65,6 +72,11 @@ import (
 	"time"
 	"unsafe"
 )
+
+// dirMapThreshold is the number of directory entries at which a hash map
+// is allocated for O(1) lookups. Below this, linear scan is faster due
+// to cache locality and zero map overhead.
+const dirMapThreshold = 32
 
 // An Inode represents the basic metadata of a file.
 //
@@ -88,7 +100,7 @@ type Inode struct {
 	Gid   uint32
 
 	Dir    Directory
-	dirMap map[string]*DirEntry // O(1) name lookup, keyed by entry name
+	dirMap map[string]*DirEntry // nil for small directories, lazily allocated
 
 	mu sync.RWMutex // protects Dir and dirMap
 }
@@ -164,19 +176,11 @@ func (e *DirEntry) String() string {
 	return fmt.Sprintf("entry{%q, inode%s", e.name, nodeStr)
 }
 
-// Directory is a sorted slice of directory entries.
-// It implements sort.Interface for maintaining alphabetical order by name.
-// This enables O(log n) lookups via binary search.
+// Directory is a slice of directory entries in arbitrary order.
 type Directory []*DirEntry
 
 // Len returns the number of entries in the directory.
 func (d Directory) Len() int { return len(d) }
-
-// Swap exchanges entries at positions i and j.
-func (d Directory) Swap(i, j int) { d[i], d[j] = d[j], d[i] }
-
-// Less reports whether the entry at i should sort before the entry at j.
-func (d Directory) Less(i, j int) bool { return d[i].Name() < d[j].Name() }
 
 func (n *Inode) String() string {
 	if n == nil {
@@ -218,20 +222,39 @@ func (n *Ino) NewDir(mode os.FileMode) *Inode {
 	dir.Mode = os.ModeDir | mode
 	// Initialize . and .. without locking since this is a new inode
 	// not yet visible to other goroutines
-	dir.Dir = make(Directory, 0, 2)
-	dir.dirMap = make(map[string]*DirEntry, 2)
 	dotEntry := NewDirEntry(".", dir)
 	dotdotEntry := NewDirEntry("..", dir)
-	dir.Dir = append(dir.Dir, dotEntry, dotdotEntry)
-	dir.dirMap["."] = dotEntry
-	dir.dirMap[".."] = dotdotEntry
+	dir.Dir = Directory{dotEntry, dotdotEntry}
 	dotEntry.Inode.countUp()
 	dotdotEntry.Inode.countUp()
 	return dir
 }
 
-// Link adds a directory entry (DirEntry) for the given node (assumed to be a directory)
-// to the provided child Inode. If an entry with the same name exists, it is replaced.
+// lookup finds an entry by name. Caller must hold n.mu (read or write).
+func (n *Inode) lookup(name string) *DirEntry {
+	if n.dirMap != nil {
+		return n.dirMap[name]
+	}
+	for _, e := range n.Dir {
+		if e.name == name {
+			return e
+		}
+	}
+	return nil
+}
+
+// promote builds the dirMap from the current Dir slice.
+// Called when directory size exceeds dirMapThreshold.
+// Caller must hold n.mu.Lock().
+func (n *Inode) promote() {
+	n.dirMap = make(map[string]*DirEntry, len(n.Dir))
+	for _, e := range n.Dir {
+		n.dirMap[e.name] = e
+	}
+}
+
+// Link adds a directory entry for the given child Inode.
+// If an entry with the same name exists, it is replaced.
 // This method is safe for concurrent use.
 func (n *Inode) Link(name string, child *Inode) error {
 	if !n.IsDir() {
@@ -240,13 +263,15 @@ func (n *Inode) Link(name string, child *Inode) error {
 
 	n.mu.Lock()
 	defer n.mu.Unlock()
-	n.initDirMap()
 
 	entry := NewDirEntry(name, child)
 
-	if old, exists := n.dirMap[name]; exists {
+	// Replace existing entry
+	if old := n.lookup(name); old != nil {
 		old.Inode.countDown()
-		n.dirMap[name] = entry
+		if n.dirMap != nil {
+			n.dirMap[name] = entry
+		}
 		for i, e := range n.Dir {
 			if e.name == name {
 				n.Dir[i] = entry
@@ -258,8 +283,13 @@ func (n *Inode) Link(name string, child *Inode) error {
 		return nil
 	}
 
-	n.dirMap[name] = entry
+	// New entry
 	n.Dir = append(n.Dir, entry)
+	if n.dirMap != nil {
+		n.dirMap[name] = entry
+	} else if len(n.Dir) > dirMapThreshold {
+		n.promote()
+	}
 	entry.Inode.countUp()
 	n.modified()
 	return nil
@@ -274,17 +304,17 @@ func (n *Inode) Unlink(name string) error {
 
 	n.mu.Lock()
 	defer n.mu.Unlock()
-	n.initDirMap()
 
-	entry, exists := n.dirMap[name]
-	if !exists {
+	entry := n.lookup(name)
+	if entry == nil {
 		return syscall.ENOENT
 	}
 
-	// Remove from map
-	delete(n.dirMap, name)
+	if n.dirMap != nil {
+		delete(n.dirMap, name)
+	}
 
-	// Remove from Dir slice using swap-remove (O(1))
+	// Swap-remove from Dir slice
 	for i, e := range n.Dir {
 		if e.name == name {
 			last := len(n.Dir) - 1
@@ -308,10 +338,7 @@ func (n *Inode) UnlinkAll() {
 	entries := make([]*DirEntry, len(n.Dir))
 	copy(entries, n.Dir)
 	n.Dir = n.Dir[:0]
-	// Clear the map
-	for k := range n.dirMap {
-		delete(n.dirMap, k)
-	}
+	n.dirMap = nil
 	n.modified()
 	n.mu.Unlock()
 
@@ -356,16 +383,14 @@ func (n *Inode) RUnlock() {
 	n.mu.RUnlock()
 }
 
-// ReadDir returns a snapshot of directory entries.
+// ReadDir returns a snapshot of directory entries in arbitrary order.
+// Callers that need sorted output must sort the result.
 // This method is safe for concurrent use.
 func (n *Inode) ReadDir() []*DirEntry {
 	n.mu.RLock()
 	defer n.mu.RUnlock()
 	result := make([]*DirEntry, len(n.Dir))
 	copy(result, n.Dir)
-	sort.Slice(result, func(i, j int) bool {
-		return result[i].name < result[j].name
-	})
 	return result
 }
 
@@ -373,18 +398,8 @@ func (n *Inode) ReadDir() []*DirEntry {
 // Returns nil if not found. This method is safe for concurrent use.
 func (n *Inode) Lookup(name string) *DirEntry {
 	n.mu.RLock()
-	if n.dirMap != nil {
-		entry := n.dirMap[name]
-		n.mu.RUnlock()
-		return entry
-	}
-	n.mu.RUnlock()
-	// Fallback for inodes without map (shouldn't happen in normal use)
-	n.mu.Lock()
-	n.initDirMap()
-	entry := n.dirMap[name]
-	n.mu.Unlock()
-	return entry
+	defer n.mu.RUnlock()
+	return n.lookup(name)
 }
 
 // Rename moves/renames a file or directory from oldpath to newpath.
@@ -427,11 +442,9 @@ func (n *Inode) Rename(oldpath, newpath string) error {
 
 	// Lock directories in pointer order to prevent deadlock
 	if srcParent == dstParent {
-		// Same directory - single lock
 		srcParent.mu.Lock()
 		defer srcParent.mu.Unlock()
 	} else {
-		// Different directories - lock in address order
 		first, second := srcParent, dstParent
 		if uintptr(unsafe.Pointer(dstParent)) < uintptr(unsafe.Pointer(srcParent)) {
 			first, second = dstParent, srcParent
@@ -442,32 +455,32 @@ func (n *Inode) Rename(oldpath, newpath string) error {
 		defer second.mu.Unlock()
 	}
 
-	// Ensure dirMaps are initialized
-	srcParent.initDirMap()
-	if srcParent != dstParent {
-		dstParent.initDirMap()
-	}
-
 	// Re-verify source exists after acquiring locks
-	if _, exists := srcParent.dirMap[srcName]; !exists {
+	srcEntry := srcParent.lookup(srcName)
+	if srcEntry == nil {
 		return syscall.ENOENT
 	}
 
 	// Re-verify target doesn't exist after acquiring locks
-	if _, exists := dstParent.dirMap[dstName]; exists {
+	if dstParent.lookup(dstName) != nil {
 		return syscall.EEXIST
 	}
 
-	// Add entry to destination (append, no sorted insert)
+	// Add entry to destination
 	entry := NewDirEntry(dstName, srcNode)
-	dstParent.dirMap[dstName] = entry
 	dstParent.Dir = append(dstParent.Dir, entry)
+	if dstParent.dirMap != nil {
+		dstParent.dirMap[dstName] = entry
+	} else if len(dstParent.Dir) > dirMapThreshold {
+		dstParent.promote()
+	}
 	srcNode.countUp()
 	dstParent.modified()
 
 	// Remove entry from source
-	srcEntry := srcParent.dirMap[srcName]
-	delete(srcParent.dirMap, srcName)
+	if srcParent.dirMap != nil {
+		delete(srcParent.dirMap, srcName)
+	}
 	for i, e := range srcParent.Dir {
 		if e.name == srcName {
 			last := len(srcParent.Dir) - 1
@@ -496,21 +509,16 @@ func (n *Inode) Resolve(path string) (*Inode, error) {
 	}
 
 	n.mu.RLock()
-	var nn *Inode
-	if n.dirMap != nil {
-		if entry := n.dirMap[name]; entry != nil {
-			nn = entry.Inode
-		}
-	}
+	entry := n.lookup(name)
 	n.mu.RUnlock()
 
-	if nn == nil {
+	if entry == nil {
 		return nil, syscall.ENOENT
 	}
 	if len(trim) == 0 {
-		return nn, nil
+		return entry.Inode, nil
 	}
-	return nn.Resolve(trim)
+	return entry.Inode.Resolve(trim)
 }
 
 // accessed updates the access time. Lock-free, safe for concurrent use.
@@ -542,16 +550,5 @@ func (n *Inode) countDown() {
 		if atomic.CompareAndSwapUint64(&n.Nlink, old, old-1) {
 			return
 		}
-	}
-}
-
-// initDirMap ensures the dirMap is initialized. Caller must hold n.mu.Lock().
-func (n *Inode) initDirMap() {
-	if n.dirMap != nil {
-		return
-	}
-	n.dirMap = make(map[string]*DirEntry, len(n.Dir))
-	for _, e := range n.Dir {
-		n.dirMap[e.name] = e
 	}
 }
