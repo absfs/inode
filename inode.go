@@ -72,7 +72,7 @@ import (
 //   - Ino is immutable after creation
 //   - Nlink, Size, Mode, Uid, Gid use atomic operations (lock-free)
 //   - ctime, atime, mtime use atomic operations (lock-free, accessed via methods)
-//   - Dir is protected by an internal RWMutex
+//   - Dir and dirMap are protected by an internal RWMutex
 //   - All exported methods are safe for concurrent use
 //   - Direct field access requires external synchronization or use of Lock/RLock methods
 type Inode struct {
@@ -87,9 +87,10 @@ type Inode struct {
 	Uid   uint32
 	Gid   uint32
 
-	Dir Directory
+	Dir    Directory
+	dirMap map[string]*DirEntry // O(1) name lookup, keyed by entry name
 
-	mu sync.RWMutex // protects Dir
+	mu sync.RWMutex // protects Dir and dirMap
 }
 
 // Ctime returns the creation time of the inode.
@@ -218,8 +219,14 @@ func (n *Ino) NewDir(mode os.FileMode) *Inode {
 	// Initialize . and .. without locking since this is a new inode
 	// not yet visible to other goroutines
 	dir.Dir = make(Directory, 0, 2)
-	dir.linkiNoLock(0, NewDirEntry(".", dir))
-	dir.linkiNoLock(1, NewDirEntry("..", dir))
+	dir.dirMap = make(map[string]*DirEntry, 2)
+	dotEntry := NewDirEntry(".", dir)
+	dotdotEntry := NewDirEntry("..", dir)
+	dir.Dir = append(dir.Dir, dotEntry, dotdotEntry)
+	dir.dirMap["."] = dotEntry
+	dir.dirMap[".."] = dotdotEntry
+	dotEntry.Inode.countUp()
+	dotdotEntry.Inode.countUp()
 	return dir
 }
 
@@ -227,42 +234,69 @@ func (n *Ino) NewDir(mode os.FileMode) *Inode {
 // to the provided child Inode. If an entry with the same name exists, it is replaced.
 // This method is safe for concurrent use.
 func (n *Inode) Link(name string, child *Inode) error {
-	// Check directory status without lock (Mode is rarely modified)
 	if !n.IsDir() {
 		return errors.New("not a directory")
 	}
 
 	n.mu.Lock()
 	defer n.mu.Unlock()
+	n.initDirMap()
 
-	x := n.find(name)
 	entry := NewDirEntry(name, child)
 
-	if x < len(n.Dir) && n.Dir[x].Name() == name {
-		n.linkswapi(x, entry)
+	if old, exists := n.dirMap[name]; exists {
+		old.Inode.countDown()
+		n.dirMap[name] = entry
+		for i, e := range n.Dir {
+			if e.name == name {
+				n.Dir[i] = entry
+				break
+			}
+		}
+		entry.Inode.countUp()
+		n.modified()
 		return nil
 	}
-	n.linki(x, entry)
+
+	n.dirMap[name] = entry
+	n.Dir = append(n.Dir, entry)
+	entry.Inode.countUp()
+	n.modified()
 	return nil
 }
 
 // Unlink removes the directory entry with the given name.
 // This method is safe for concurrent use.
 func (n *Inode) Unlink(name string) error {
-	// Check directory status without lock
 	if !n.IsDir() {
 		return errors.New("not a directory")
 	}
 
 	n.mu.Lock()
 	defer n.mu.Unlock()
+	n.initDirMap()
 
-	x := n.find(name)
-	if x == len(n.Dir) || n.Dir[x].Name() != name {
+	entry, exists := n.dirMap[name]
+	if !exists {
 		return syscall.ENOENT
 	}
 
-	n.unlinki(x)
+	// Remove from map
+	delete(n.dirMap, name)
+
+	// Remove from Dir slice using swap-remove (O(1))
+	for i, e := range n.Dir {
+		if e.name == name {
+			last := len(n.Dir) - 1
+			n.Dir[i] = n.Dir[last]
+			n.Dir[last] = nil
+			n.Dir = n.Dir[:last]
+			break
+		}
+	}
+
+	entry.Inode.countDown()
+	n.modified()
 	return nil
 }
 
@@ -274,6 +308,10 @@ func (n *Inode) UnlinkAll() {
 	entries := make([]*DirEntry, len(n.Dir))
 	copy(entries, n.Dir)
 	n.Dir = n.Dir[:0]
+	// Clear the map
+	for k := range n.dirMap {
+		delete(n.dirMap, k)
+	}
 	n.modified()
 	n.mu.Unlock()
 
@@ -325,6 +363,9 @@ func (n *Inode) ReadDir() []*DirEntry {
 	defer n.mu.RUnlock()
 	result := make([]*DirEntry, len(n.Dir))
 	copy(result, n.Dir)
+	sort.Slice(result, func(i, j int) bool {
+		return result[i].name < result[j].name
+	})
 	return result
 }
 
@@ -332,12 +373,18 @@ func (n *Inode) ReadDir() []*DirEntry {
 // Returns nil if not found. This method is safe for concurrent use.
 func (n *Inode) Lookup(name string) *DirEntry {
 	n.mu.RLock()
-	defer n.mu.RUnlock()
-	x := n.find(name)
-	if x < len(n.Dir) && n.Dir[x].Name() == name {
-		return n.Dir[x]
+	if n.dirMap != nil {
+		entry := n.dirMap[name]
+		n.mu.RUnlock()
+		return entry
 	}
-	return nil
+	n.mu.RUnlock()
+	// Fallback for inodes without map (shouldn't happen in normal use)
+	n.mu.Lock()
+	n.initDirMap()
+	entry := n.dirMap[name]
+	n.mu.Unlock()
+	return entry
 }
 
 // Rename moves/renames a file or directory from oldpath to newpath.
@@ -395,34 +442,42 @@ func (n *Inode) Rename(oldpath, newpath string) error {
 		defer second.mu.Unlock()
 	}
 
+	// Ensure dirMaps are initialized
+	srcParent.initDirMap()
+	if srcParent != dstParent {
+		dstParent.initDirMap()
+	}
+
 	// Re-verify source exists after acquiring locks
-	srcIdx := srcParent.find(srcName)
-	if srcIdx >= len(srcParent.Dir) || srcParent.Dir[srcIdx].Name() != srcName {
+	if _, exists := srcParent.dirMap[srcName]; !exists {
 		return syscall.ENOENT
 	}
 
 	// Re-verify target doesn't exist after acquiring locks
-	dstIdx := dstParent.find(dstName)
-	if dstIdx < len(dstParent.Dir) && dstParent.Dir[dstIdx].Name() == dstName {
+	if _, exists := dstParent.dirMap[dstName]; exists {
 		return syscall.EEXIST
 	}
 
-	// Create entry in destination
+	// Add entry to destination (append, no sorted insert)
 	entry := NewDirEntry(dstName, srcNode)
-	dstParent.Dir = append(dstParent.Dir, nil)
-	copy(dstParent.Dir[dstIdx+1:], dstParent.Dir[dstIdx:])
-	dstParent.Dir[dstIdx] = entry
+	dstParent.dirMap[dstName] = entry
+	dstParent.Dir = append(dstParent.Dir, entry)
 	srcNode.countUp()
 	dstParent.modified()
 
-	// Remove entry from source (recalculate index if same directory since we inserted)
-	if srcParent == dstParent && dstIdx <= srcIdx {
-		srcIdx++ // account for the insertion
+	// Remove entry from source
+	srcEntry := srcParent.dirMap[srcName]
+	delete(srcParent.dirMap, srcName)
+	for i, e := range srcParent.Dir {
+		if e.name == srcName {
+			last := len(srcParent.Dir) - 1
+			srcParent.Dir[i] = srcParent.Dir[last]
+			srcParent.Dir[last] = nil
+			srcParent.Dir = srcParent.Dir[:last]
+			break
+		}
 	}
-	srcParent.Dir[srcIdx].Inode.countDown()
-	copy(srcParent.Dir[srcIdx:], srcParent.Dir[srcIdx+1:])
-	srcParent.Dir[len(srcParent.Dir)-1] = nil
-	srcParent.Dir = srcParent.Dir[:len(srcParent.Dir)-1]
+	srcEntry.Inode.countDown()
 	srcParent.modified()
 
 	return nil
@@ -441,10 +496,11 @@ func (n *Inode) Resolve(path string) (*Inode, error) {
 	}
 
 	n.mu.RLock()
-	x := n.find(name)
 	var nn *Inode
-	if x < len(n.Dir) && n.Dir[x].Name() == name {
-		nn = n.Dir[x].Inode
+	if n.dirMap != nil {
+		if entry := n.dirMap[name]; entry != nil {
+			nn = entry.Inode
+		}
 	}
 	n.mu.RUnlock()
 
@@ -489,45 +545,13 @@ func (n *Inode) countDown() {
 	}
 }
 
-// unlinki removes the entry at index i. Caller must hold n.mu.Lock().
-func (n *Inode) unlinki(i int) {
-	n.Dir[i].Inode.countDown()
-	copy(n.Dir[i:], n.Dir[i+1:])
-	n.Dir[len(n.Dir)-1] = nil // avoid memory leak
-	n.Dir = n.Dir[:len(n.Dir)-1]
-	n.modified()
-}
-
-// linkswapi replaces the entry at index i. Caller must hold n.mu.Lock().
-func (n *Inode) linkswapi(i int, entry *DirEntry) {
-	n.Dir[i].Inode.countDown()
-	n.Dir[i] = entry
-	n.Dir[i].Inode.countUp()
-	n.modified()
-}
-
-// linki inserts entry at index i maintaining sorted order. Caller must hold n.mu.Lock().
-func (n *Inode) linki(i int, entry *DirEntry) {
-	n.Dir = append(n.Dir, nil)
-	copy(n.Dir[i+1:], n.Dir[i:])
-	n.Dir[i] = entry
-	n.Dir[i].Inode.countUp()
-	n.modified()
-}
-
-// linkiNoLock inserts entry at index i without locking or updating timestamps.
-// Used only during inode initialization before the inode is visible to other goroutines.
-func (n *Inode) linkiNoLock(i int, entry *DirEntry) {
-	n.Dir = append(n.Dir, nil)
-	copy(n.Dir[i+1:], n.Dir[i:])
-	n.Dir[i] = entry
-	n.Dir[i].Inode.countUp()
-}
-
-// find returns the index where name should be inserted to maintain sorted order.
-// If the name exists, returns its index. Caller must hold n.mu.RLock() or n.mu.Lock().
-func (n *Inode) find(name string) int {
-	return sort.Search(len(n.Dir), func(i int) bool {
-		return n.Dir[i].Name() >= name
-	})
+// initDirMap ensures the dirMap is initialized. Caller must hold n.mu.Lock().
+func (n *Inode) initDirMap() {
+	if n.dirMap != nil {
+		return
+	}
+	n.dirMap = make(map[string]*DirEntry, len(n.Dir))
+	for _, e := range n.Dir {
+		n.dirMap[e.name] = e
+	}
 }

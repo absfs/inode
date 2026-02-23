@@ -5,7 +5,8 @@ import (
 	"strings"
 )
 
-// Walk traverses a directory tree and calls fn for each file/directory encountered
+// Walk traverses a directory tree and calls fn for each file/directory encountered.
+// Entries are visited in sorted order.
 func Walk(node *Inode, path string, fn func(path string, n *Inode) error) error {
 	err := fn(path, node)
 	if err != nil {
@@ -28,7 +29,8 @@ func Walk(node *Inode, path string, fn func(path string, n *Inode) error) error 
 	if path == "/" {
 		path = ""
 	}
-	for _, entry := range node.Dir {
+	entries := node.ReadDir()
+	for _, entry := range entries {
 		err := Walk(entry.Inode, path+"/"+entry.Name(), fn)
 		if err != nil {
 			return err

@@ -143,7 +143,7 @@ func TestResolve(t *testing.T) {
 		if path == "/" {
 			path = ""
 		}
-		for _, entry := range node.Dir {
+		for _, entry := range node.ReadDir() {
 			err := walk(entry.Inode, path+"/"+entry.Name())
 			if err != nil {
 				return err
