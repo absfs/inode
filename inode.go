@@ -186,8 +186,8 @@ func (e *DirEntry) String() string {
 //
 // Prior to v1.1.0, directory entries were maintained in sorted order as an
 // implementation detail. This is no longer the case — entries are stored in
-// insertion order for performance. Code that relied on sorted iteration
-// should sort the result of ReadDir explicitly:
+// arbitrary order and no ordering guarantee is made. Code that relied on
+// sorted iteration should sort the result of ReadDir explicitly:
 //
 //	entries := node.ReadDir()
 //	sort.Slice(entries, func(i, j int) bool {
