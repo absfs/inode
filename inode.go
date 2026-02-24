@@ -183,10 +183,28 @@ func (e *DirEntry) String() string {
 }
 
 // Directory is a slice of directory entries in arbitrary order.
+//
+// Prior to v1.1.0, directory entries were maintained in sorted order as an
+// implementation detail. This is no longer the case — entries are stored in
+// insertion order for performance. Code that relied on sorted iteration
+// should sort the result of ReadDir explicitly:
+//
+//	entries := node.ReadDir()
+//	sort.Slice(entries, func(i, j int) bool {
+//	    return entries[i].Name() < entries[j].Name()
+//	})
+//
+// Directory implements sort.Interface so sort.Sort(dir) also works.
 type Directory []*DirEntry
 
 // Len returns the number of entries in the directory.
 func (d Directory) Len() int { return len(d) }
+
+// Swap exchanges entries at positions i and j.
+func (d Directory) Swap(i, j int) { d[i], d[j] = d[j], d[i] }
+
+// Less reports whether the entry at i should sort before the entry at j.
+func (d Directory) Less(i, j int) bool { return d[i].Name() < d[j].Name() }
 
 func (n *Inode) String() string {
 	if n == nil {
